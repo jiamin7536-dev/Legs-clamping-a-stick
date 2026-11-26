@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>健身房双脚夹棒反应挑战 - 下劈旋转版</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            background-color: #111318;
+            color: #f1f5f9;
+            font-family: 'Microsoft YaHei', 'Courier New', sans-serif;
+            overflow: hidden;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #0d0f14;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            max-width: 1280px;
+            max-height: 720px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.85);
+            cursor: pointer;
+        }
+
+        #hud-top {
+            position: absolute;
+            top: 14px;
+            left: 16px;
+            right: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            pointer-events: none;
+            z-index: 20;
+            gap: 12px;
+        }
+
+        .panel {
+            background: rgba(15, 23, 42, 0.86);
+            border: 2px solid #475569;
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 13px;
+            line-height: 1.55;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+            pointer-events: auto;
+        }
+
+        .kbd {
+            display: inline-block;
+            background: #1e293b;
+            border: 1px solid #64748b;
+            border-radius: 4px;
+            padding: 0 6px;
+            color: #38bdf8;
+            font-weight: bold;
+            font-size: 12px;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 8px;
+            pointer-events: auto;
+        }
+
+        .action-btn {
+            background: #1e293b;
+            color: #f8fafc;
+            border: 2px solid #38bdf8;
+            border-radius: 6px;
+            padding: 8px 14px;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .action-btn:hover {
+            background: #38bdf8;
+            color: #0f172a;
+        }
+
+        .action-btn.feint {
+            border-color: #facc15;
+            color: #facc15;
+        }
+
+        .action-btn.feint:hover {
+            background: #facc15;
+            color: #0f172a;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas" width="960" height="540"></canvas>
+
+    <div id="hud-top">
+        <div class="panel" id="guide-panel">
+            <div><b style="color:#f43f5e;">【进攻模式：双手握柄绕手腕下劈】</b></div>
+            <div><span class="kbd">按住左键</span> / <span class="kbd">空格</span> 后仰举棒蓄力，松开向下敲劈 &nbsp;|&nbsp; <span class="kbd">F 键</span> 假动作骗她合脚！</div>
+            <div style="color:#94a3b8; font-size:12px; margin-top:2px;">像拿筷子敲桌子一样向下劈击，没被双脚夹住就会直接敲中裤裆！</div>
+        </div>
+
+        <div class="btn-group">
+            <button class="action-btn feint" onclick="triggerFeint()">⚡ 假动作晃点 (F)</button>
+            <button class="action-btn" id="mode-btn" onclick="toggleMode()">🔄 切换：我来用脚接棒</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const W = 960;
+const H = 540;
+
+// ============================================================================
+// 1. WebAudio 音效系统
+// ============================================================================
+let audioCtx = null;
+function initAudio() {
+    if (!audioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (AC) audioCtx = new AC();
+    }
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function playWhooshSound() {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(340, now);
+    osc.frequency.exponentialRampToValueAtTime(105, now + 0.16);
+    gain.gain.setValueAtTime(0.25, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(now);
+    osc.stop(now + 0.17);
+}
+
+function playCatchClapSound() {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(220, now);
+    osc.frequency.exponentialRampToValueAtTime(75, now + 0.12);
+    gain.gain.setValueAtTime(0.42, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(now);
+    osc.stop(now + 0.13);
+}
+
+function playPainHitSound() {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    const osc1 = audioCtx.createOscillator();
+    const gain1 = audioCtx.createGain();
+    osc1.type = 'sawtooth';
+    osc1.frequency.setValueAtTime(150, now);
+    osc1.frequency.exponentialRampToValueAtTime(42, now + 0.25);
+    gain1.gain.setValueAtTime(0.45, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    osc1.connect(gain1);
+    gain1.connect(audioCtx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.26);
+
+    const osc2 = audioCtx.createOscillator();
+    const gain2 = audioCtx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(520, now + 0.04);
+    osc2.frequency.linearRampToValueAtTime(880, now + 0.16);
+    osc2.frequency.exponentialRampToValueAtTime(360, now + 0.42);
+    gain2.gain.setValueAtTime(0.28, now + 0.04);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
+    osc2.connect(gain2);
+    gain2.connect(audioCtx.destination);
+    osc2.start(now + 0.04);
+    osc2.stop(now + 0.43);
+}
+
+// ============================================================================
+// 2. 游戏核心状态（棒子绕双手支点逆时针下劈）
+// ============================================================================
+// Canvas 坐标系（X向右，Y向下）：
+// 棒子从手部支点 (0, 0) 沿着 +X 方向绘制。
+// -Math.PI * 0.50 = 垂直向上 (12点钟方向，待机举棒)
+// -Math.PI * 0.35 = 向右上后仰 (1点钟方向，蓄力高举)
+// -Math.PI * 0.85 = 向左上倾斜 (10点钟方向，经过双脚拦截高度)
+// -Math.PI * 1.08 = 向左下劈到底 (8点半方向，棒头正正敲中躺地女生裤裆！)
+
+const ANGLE_IDLE = -Math.PI * 0.50;
+const ANGLE_CATCH = -Math.PI * 0.86;
+const ANGLE_HIT = -Math.PI * 1.07;
+
+let gameMode = 'attack'; // 'attack' | 'defend'
+let hitScore = 0;
+let catchScore = 0;
+let combo = 0;
+
+const bat = {
+    state: 'idle',     // 'idle' | 'charging' | 'swinging' | 'feint' | 'caught' | 'hit' | 'recover'
+    angle: ANGLE_IDLE,
+    power: 0,
+    timer: 0,
+    aiNextSwingTimer: 1.4
+};
+
+const girl = {
+    legSpread: 1.0,    // 1.0 = 双腿大张开 | 0.0 = 双脚紧闭夹住棒子
+    targetSpread: 1.0,
+    expression: 'normal', // 'normal' | 'alert' | 'smug' | 'pain'
+    exprTimer: 0,
+    bodyShake: 0,
+    aiReactCooldown: 0,
+    aiFeintTrickedTimer: 0
+};
+
+let screenShake = 0;
+let floatingTexts = [];
+
+function spawnFloatingText(text, x, y, color, size = 28) {
+    floatingTexts.push({
+        text, x, y, color, size,
+        vy: -55,
+        life: 1.35,
+        maxLife: 1.35
+    });
+}
+
+function toggleMode() {
+    initAudio();
+    gameMode = (gameMode === 'attack') ? 'defend' : 'attack';
+    bat.state = 'idle';
+    bat.angle = ANGLE_IDLE;
+    bat.power = 0;
+    girl.targetSpread = 1.0;
+    girl.expression = 'normal';
+    bat.aiNextSwingTimer = 1.4;
+
+    const guide = document.getElementById('guide-panel');
+    const btn = document.getElementById('mode-btn');
+    if (gameMode === 'attack') {
+        guide.innerHTML = `
+            <div><b style="color:#f43f5e;">【进攻模式：双手握柄绕手腕下劈】</b></div>
+            <div><span class="kbd">按住左键</span> / <span class="kbd">空格</span> 后仰举棒蓄力，松开向下敲劈 &nbsp;|&nbsp; <span class="kbd">F 键</span> 假动作骗她合脚！</div>
+            <div style="color:#94a3b8; font-size:12px; margin-top:2px;">像拿筷子敲桌子一样向下劈击，没被双脚夹住就会直接敲中裤裆！</div>
+        `;
+        btn.textContent = '🔄 切换：我来用脚接棒';
+    } else {
+        guide.innerHTML = `
+            <div><b style="color:#38bdf8;">【防守模式：你控制双脚接棒】</b></div>
+            <div>观察对手举棒下劈的弧线！棒子劈下来瞬间按下 <span class="kbd">鼠标左键</span> 或 <span class="kbd">空格</span> 合脚夹棒！</div>
+            <div style="color:#94a3b8; font-size:12px; margin-top:2px;">小心对手的假动作晃点，夹早了会露出空档！</div>
+        `;
+        btn.textContent = '🔄 切换：我来挥棒打她';
+    }
+}
+
+// ============================================================================
+// 3. 输入交互
+// ============================================================================
+function handlePrimaryDown() {
+    initAudio();
+    if (gameMode === 'attack') {
+        if (bat.state === 'idle') {
+            bat.state = 'charging';
+            bat.power = 0.15;
+            girl.expression = 'alert';
+        }
+    } else {
+        if (girl.aiReactCooldown <= 0) {
+            girl.targetSpread = 0.0;
+            girl.aiReactCooldown = 0.45;
+            playCatchClapSound();
+            // 判定是否刚好在双脚拦截弧度范围内夹住棒子
+            if (bat.state === 'swinging' && bat.angle < -Math.PI * 0.72 && bat.angle > -Math.PI * 0.98) {
+                bat.state = 'caught';
+                bat.angle = ANGLE_CATCH;
+                bat.timer = 0.9;
+                girl.expression = 'smug';
+                girl.exprTimer = 1.1;
+                catchScore++;
+                combo++;
+                spawnFloatingText('啪！双脚完美夹住下劈的棒子！', 430, 210, '#38bdf8', 30);
+            }
+        }
+    }
+}
+
+function handlePrimaryUp() {
+    if (gameMode === 'attack' && bat.state === 'charging') {
+        executeSwing();
+    }
+}
+
+function triggerFeint() {
+    initAudio();
+    if (gameMode !== 'attack' || (bat.state !== 'idle' && bat.state !== 'charging')) return;
+    bat.state = 'feint';
+    bat.timer = 0.32;
+    bat.power = 0;
+    playWhooshSound();
+
+    if (Math.random() < 0.78) {
+        girl.targetSpread = 0.0;
+        girl.expression = 'alert';
+        girl.aiFeintTrickedTimer = 0.85;
+        spawnFloatingText('晃点成功！她提前夹空了！', 420, 190, '#facc15', 24);
+    } else {
+        spawnFloatingText('她识破了假动作！', 420, 190, '#94a3b8', 22);
+    }
+}
+
+function executeSwing() {
+    bat.state = 'swinging';
+    bat.timer = 0;
+    playWhooshSound();
+
+    if (gameMode === 'attack') {
+        const catchProb = girl.aiFeintTrickedTimer > 0 ? 0.15 : Math.max(0.35, 0.78 - bat.power * 0.25);
+        window._willAiCatchThisSwing = (Math.random() < catchProb);
+    }
+}
+
+canvas.addEventListener('mousedown', e => {
+    if (e.button === 0) handlePrimaryDown();
+    else if (e.button === 2) triggerFeint();
+});
+window.addEventListener('mouseup', e => {
+    if (e.button === 0) handlePrimaryUp();
+});
+window.addEventListener('contextmenu', e => e.preventDefault());
+
+window.addEventListener('keydown', e => {
+    if (e.code === 'Space') {
+        e.preventDefault();
+        if (!e.repeat) handlePrimaryDown();
+    } else if (e.code === 'KeyF') {
+        triggerFeint();
+    }
+});
+window.addEventListener('keyup', e => {
+    if (e.code === 'Space') handlePrimaryUp();
+});
+
+// ============================================================================
+// 4. 逻辑更新循环
+// ============================================================================
+function update(dt) {
+    screenShake *= Math.exp(-dt * 14);
+    girl.bodyShake *= Math.exp(-dt * 12);
+
+    if (girl.exprTimer > 0) {
+        girl.exprTimer -= dt;
+        if (girl.exprTimer <= 0 && bat.state === 'idle') {
+            girl.expression = 'normal';
+        }
+    }
+
+    if (girl.aiFeintTrickedTimer > 0) {
+        girl.aiFeintTrickedTimer -= dt;
+        if (girl.aiFeintTrickedTimer < 0.55 && bat.state !== 'caught') {
+            girl.targetSpread = 1.0;
+        }
+    }
+
+    if (girl.aiReactCooldown > 0) {
+        girl.aiReactCooldown -= dt;
+        if (girl.aiReactCooldown <= 0 && gameMode === 'defend' && bat.state !== 'caught') {
+            girl.targetSpread = 1.0;
+        }
+    }
+
+    const legSpeed = (girl.targetSpread < girl.legSpread) ? 24 : 11;
+    girl.legSpread += (girl.targetSpread - girl.legSpread) * Math.min(1, dt * legSpeed);
+
+    if (gameMode === 'defend' && bat.state === 'idle') {
+        bat.aiNextSwingTimer -= dt;
+        if (bat.aiNextSwingTimer <= 0) {
+            if (Math.random() < 0.3) {
+                bat.state = 'feint';
+                bat.timer = 0.34;
+                playWhooshSound();
+                bat.aiNextSwingTimer = 0.75 + Math.random() * 0.5;
+            } else {
+                bat.state = 'charging';
+                bat.power = 0.2;
+                bat.aiChargeTarget = 0.45 + Math.random() * 0.45;
+            }
+        }
+    }
+
+    if (bat.state === 'charging') {
+        bat.power = Math.min(1.0, bat.power + dt * 1.45);
+        // 蓄力时向右上后仰举高（角度从 -0.50*PI 增大到 -0.32*PI）
+        bat.angle = ANGLE_IDLE + bat.power * (Math.PI * 0.18);
+        if (gameMode === 'defend' && bat.power >= (bat.aiChargeTarget || 0.6)) {
+            executeSwing();
+        }
+    } else if (bat.state === 'feint') {
+        bat.timer -= dt;
+        // 假动作向下虚晃四分之一圈立刻抬起
+        bat.angle = ANGLE_IDLE - Math.sin((1 - bat.timer / 0.32) * Math.PI) * (Math.PI * 0.24);
+        if (bat.timer <= 0) {
+            bat.state = 'idle';
+            bat.angle = ANGLE_IDLE;
+        }
+    } else if (bat.state === 'swinging') {
+        // 逆时针向下劈砍（angle 减小，从举高位置一路扫向 -1.07*PI 的裤裆位置）
+        const angularSpeed = 6.2 + bat.power * 3.8;
+        bat.angle -= angularSpeed * dt;
+
+        // 劈到半空时 AI 判断是否合脚夹住
+        if (gameMode === 'attack' && bat.angle < -Math.PI * 0.68 && window._willAiCatchThisSwing) {
+            girl.targetSpread = 0.0;
+        }
+
+        // 判定 1：经过双脚拦截高度 (ANGLE_CATCH)
+        if (bat.angle <= ANGLE_CATCH && girl.legSpread < 0.25) {
+            bat.state = 'caught';
+            bat.angle = ANGLE_CATCH;
+            bat.timer = 0.95;
+            girl.targetSpread = 0.0;
+            girl.expression = 'smug';
+            girl.exprTimer = 1.1;
+            playCatchClapSound();
+            screenShake = 6;
+            if (gameMode === 'attack') {
+                combo = 0;
+                spawnFloatingText('啪！被她用双脚夹住了！', 430, 210, '#38bdf8', 28);
+            } else {
+                catchScore++;
+                combo++;
+                spawnFloatingText('漂亮！双脚成功接住棒子！', 430, 210, '#22c55e', 30);
+            }
+        }
+        // 判定 2：双脚没夹住，继续下劈直接敲中裤裆要害 (ANGLE_HIT)！
+        else if (bat.angle <= ANGLE_HIT) {
+            bat.state = 'hit';
+            bat.angle = ANGLE_HIT;
+            bat.timer = 1.25;
+            girl.targetSpread = 1.0;
+            girl.expression = 'pain';
+            girl.exprTimer = 1.35;
+            girl.bodyShake = 22;
+            screenShake = 18;
+            playPainHitSound();
+
+            if (gameMode === 'attack') {
+                hitScore++;
+                combo++;
+                const isCrit = bat.power > 0.7;
+                spawnFloatingText(
+                    isCrit ? '💥 暴击命中要害！！痛到灵魂出窍！' : '💥 没接住！直接敲在裤裆上了！',
+                    410, 200, '#ef4444', isCrit ? 32 : 28
+                );
+            } else {
+                combo = 0;
+                spawnFloatingText('💥 哎哟！没接住被打中要害了！', 410, 200, '#ef4444', 30);
+            }
+        }
+    } else if (bat.state === 'caught' || bat.state === 'hit') {
+        bat.timer -= dt;
+        if (bat.timer <= 0) {
+            bat.state = 'recover';
+            girl.targetSpread = 1.0;
+        }
+    } else if (bat.state === 'recover') {
+        bat.angle += (ANGLE_IDLE - bat.angle) * Math.min(1, dt * 10);
+        if (Math.abs(bat.angle - ANGLE_IDLE) < 0.03) {
+            bat.angle = ANGLE_IDLE;
+            bat.power = 0;
+            bat.state = 'idle';
+            bat.aiNextSwingTimer = 1.1 + Math.random() * 0.8;
+        }
+    }
+
+    for (let i = floatingTexts.length - 1; i >= 0; i--) {
+        const ft = floatingTexts[i];
+        ft.y += ft.vy * dt;
+        ft.vy *= Math.exp(-dt * 2.5);
+        ft.life -= dt;
+        if (ft.life <= 0) floatingTexts.splice(i, 1);
+    }
+}
+
+// ============================================================================
+// 5. 渲染场景（精确几何对齐：双手圆心 -> 棒尖圆弧正好扫过双脚与裤裆）
+// ============================================================================
+function renderScene() {
+    ctx.save();
+    if (screenShake > 0.2) {
+        const sx = (Math.random() - 0.5) * screenShake;
+        const sy = (Math.random() - 0.5) * screenShake;
+        ctx.translate(sx, sy);
+    }
+
+    // 背景墙面与木质护墙板
+    ctx.fillStyle = '#e7e2d8';
+    ctx.fillRect(0, 0, W, 240);
+    ctx.fillStyle = '#4a3226';
+    ctx.fillRect(0, 125, W, 115);
+    ctx.fillStyle = '#332118';
+    ctx.fillRect(0, 123, W, 4);
+
+    // 木门
+    ctx.fillStyle = '#3b261c';
+    ctx.fillRect(310, 18, 128, 222);
+    ctx.fillStyle = '#523629';
+    ctx.fillRect(320, 28, 108, 212);
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillRect(342, 46, 36, 155);
+
+    // 右侧收纳柜与水壶
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(640, 128, 145, 112);
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(640, 128, 145, 112);
+    const bottleColors = ['#0284c7', '#38bdf8', '#1e293b', '#facc15'];
+    for (let i = 0; i < 4; i++) {
+        ctx.fillStyle = bottleColors[i];
+        ctx.fillRect(652 + i * 24, 96, 16, 32);
+    }
+
+    // 地垫
+    const floorGrad = ctx.createLinearGradient(0, 235, 0, H);
+    floorGrad.addColorStop(0, '#1e2026');
+    floorGrad.addColorStop(1, '#2b2e36');
+    ctx.fillStyle = floorGrad;
+    ctx.fillRect(0, 235, W, H - 235);
+
+    ctx.strokeStyle = '#111216';
+    ctx.lineWidth = 2;
+    for (let y = 265; y < H; y += 58) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+        ctx.stroke();
+    }
+    for (let i = -2; i <= 6; i++) {
+        ctx.beginPath();
+        ctx.moveTo(260 + i * 110, 235);
+        ctx.lineTo(120 + i * 165, H);
+        ctx.stroke();
+    }
+
+    // 1. 躺地女生（裤裆位于约 (282, 304)，双脚合拢夹棒点位于约 (355, 168)）
+    drawLyingGirl();
+
+    // 2. 跪姿挥棒女生 + 绕手腕旋转下劈的红棒
+    // 验算圆心 (535, 245) 与 棒长 258：
+    // - 当 angle = -0.86*PI (拦截点) 时：棒尖坐标 = (535 + 258*cos(-0.86*PI), 245 + 258*sin(-0.86*PI)) = (302, 135)，棒身中段正好穿过双脚夹持点 (375, 172)！
+    // - 当 angle = -1.07*PI (命中点) 时：棒尖坐标 = (535 + 258*cos(-1.07*PI), 245 + 258*sin(-1.07*PI)) = (283, 301)，正正敲在躺地女生裤裆 (282, 304) 上！
+    drawKneelingStrikerAndRotatingBat();
+
+    renderEffectsAndHUD();
+
+    ctx.restore();
+}
+
+function drawLyingGirl() {
+    const shakeX = (Math.random() - 0.5) * girl.bodyShake;
+    const shakeY = (Math.random() - 0.5) * girl.bodyShake * 0.6;
+    const headX = 162 + shakeX;
+    const headY = 232 + shakeY;
+    const hipX = 278 + shakeX;
+    const hipY = 304 + shakeY;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
+    ctx.beginPath();
+    ctx.ellipse(215, 290, 115, 36, 0.25, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 双臂
+    ctx.strokeStyle = '#18181b';
+    ctx.lineWidth = 2;
+    ctx.fillStyle = '#e5a97c';
+    ctx.beginPath();
+    ctx.moveTo(175, 256); ctx.lineTo(95, 312); ctx.lineTo(106, 322); ctx.lineTo(188, 270);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(222, 244); ctx.lineTo(318, 252); ctx.lineTo(320, 263); ctx.lineTo(222, 256);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    // 蓝短袖
+    ctx.fillStyle = '#3b82f6';
+    ctx.beginPath();
+    ctx.moveTo(172, 248); ctx.lineTo(228, 240); ctx.lineTo(264, 274); ctx.lineTo(216, 294);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    // 黑短裤与要害区域
+    ctx.fillStyle = '#18181b';
+    ctx.beginPath();
+    ctx.moveTo(216, 294); ctx.lineTo(264, 274);
+    ctx.quadraticCurveTo(304, 286, 300, 314);
+    ctx.quadraticCurveTo(264, 332, 224, 314);
+    ctx.closePath(); ctx.fill();
+
+    if (girl.expression === 'pain') {
+        const pulse = 18 + Math.sin(performance.now() * 0.04) * 6;
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.55)';
+        ctx.beginPath();
+        ctx.arc(hipX - 4, hipY - 2, pulse, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = '#fef08a';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(hipX - 22, hipY - 18); ctx.lineTo(hipX + 14, hipY + 14);
+        ctx.moveTo(hipX + 14, hipY - 18); ctx.lineTo(hipX - 22, hipY + 14);
+        ctx.stroke();
+    }
+
+    // 双腿
+    const spread = girl.legSpread;
+    const rKneeX = 335 - (1 - spread) * 18;
+    const rKneeY = 230 - (1 - spread) * 28;
+    const rFootX = 392 - (1 - spread) * 22;
+    const rFootY = 172 - (1 - spread) * 14;
+    drawRaisedLeg(hipX + 8, hipY - 12, rKneeX, rKneeY, rFootX, rFootY, true);
+
+    const lKneeX = 212 + (1 - spread) * 112;
+    const lKneeY = 248 - (1 - spread) * 38;
+    const lFootX = 148 + (1 - spread) * 212;
+    const lFootY = 188 - (1 - spread) * 24;
+    drawRaisedLeg(hipX - 18, hipY + 4, lKneeX, lKneeY, lFootX, lFootY, false);
+
+    drawGirlFaceAndHair(headX, headY);
+    ctx.restore();
+}
+
+function drawRaisedLeg(hx, hy, kx, ky, fx, fy, isFarLeg) {
+    ctx.fillStyle = isFarLeg ? '#dba074' : '#eab388';
+    ctx.strokeStyle = '#18181b';
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+    ctx.moveTo(hx - 14, hy - 10);
+    ctx.quadraticCurveTo(kx - 12, ky - 8, fx - 7, fy - 4);
+    ctx.lineTo(fx + 8, fy + 6);
+    ctx.quadraticCurveTo(kx + 14, ky + 10, hx + 16, hy + 12);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    ctx.fillStyle = '#f8fafc';
+    ctx.beginPath();
+    ctx.ellipse(fx + 2, fy - 8, 9, 17, 0.25, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+}
+
+function drawGirlFaceAndHair(hx, hy) {
+    ctx.fillStyle = '#1c1917';
+    ctx.beginPath();
+    ctx.ellipse(hx - 4, hy + 2, 27, 24, -0.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#f3c19b';
+    ctx.beginPath();
+    ctx.arc(hx + 2, hy, 19, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#18181b';
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+
+    ctx.fillStyle = '#1c1917';
+    ctx.beginPath();
+    ctx.arc(hx + 1, hy - 3, 19, Math.PI * 0.95, Math.PI * 1.95);
+    ctx.lineTo(hx + 16, hy - 5); ctx.lineTo(hx - 12, hy - 3);
+    ctx.closePath(); ctx.fill();
+
+    if (girl.expression === 'pain') {
+        ctx.strokeStyle = '#18181b';
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        ctx.moveTo(hx - 7, hy - 3); ctx.lineTo(hx - 1, hy); ctx.lineTo(hx - 7, hy + 3);
+        ctx.moveTo(hx + 13, hy - 3); ctx.lineTo(hx + 7, hy); ctx.lineTo(hx + 13, hy + 3);
+        ctx.stroke();
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.arc(hx - 12, hy + 2, 3.5, 0, Math.PI * 2);
+        ctx.arc(hx + 16, hy + 2, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#be123c';
+        ctx.beginPath();
+        ctx.ellipse(hx + 3, hy + 9, 7, 5.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#18181b';
+        ctx.lineWidth = 1.5; ctx.stroke();
+
+        ctx.fillStyle = '#fef2f2';
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(hx - 58, hy - 54, 118, 28, 8);
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#dc2626';
+        ctx.font = 'bold 13px "Microsoft YaHei", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('啊啊啊！好痛！！', hx + 1, hy - 35);
+    } else if (girl.expression === 'smug') {
+        ctx.strokeStyle = '#18181b';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(hx - 3, hy, 3.5, Math.PI, 0); ctx.stroke();
+        ctx.beginPath(); ctx.arc(hx + 9, hy, 3.5, Math.PI, 0); ctx.stroke();
+        ctx.fillStyle = '#f43f5e';
+        ctx.beginPath(); ctx.arc(hx + 3, hy + 6, 4.5, 0, Math.PI); ctx.fill();
+    } else {
+        ctx.fillStyle = '#18181b';
+        ctx.beginPath();
+        ctx.arc(hx - 3, hy - 1, 2.3, 0, Math.PI * 2);
+        ctx.arc(hx + 9, hy - 1, 2.3, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (girl.expression === 'alert') {
+            ctx.fillStyle = '#fb7185';
+            ctx.beginPath(); ctx.arc(hx + 3, hy + 7, 3, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#38bdf8';
+            ctx.beginPath(); ctx.arc(hx - 12, hy - 4, 2.5, 0, Math.PI * 2); ctx.fill();
+        } else {
+            ctx.strokeStyle = '#e11d48';
+            ctx.lineWidth = 1.8;
+            ctx.beginPath();
+            ctx.arc(hx + 3, hy + 5, 4, 0.1 * Math.PI, 0.9 * Math.PI);
+            ctx.stroke();
+        }
+    }
+}
+
+function drawKneelingStrikerAndRotatingBat() {
+    ctx.save();
+
+    // 旋转支点（双手紧握棒柄处，固定为圆心，就像拿筷子敲桌子！）
+    const pivotX = 535;
+    const pivotY = 245;
+    const batLen = 258;
+
+    // 1. 绘制围绕双手支点逆时针向下旋转的红色泡沫棒
+    ctx.save();
+    ctx.translate(pivotX, pivotY);
+    ctx.rotate(bat.angle);
+
+    // 挥棒下劈时的扇形动态残影（位于棒子上方顺时针侧，表示刚刚从上方劈下来）
+    if (bat.state === 'swinging') {
+        ctx.fillStyle = 'rgba(244, 63, 94, 0.26)';
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.arc(0, 0, batLen, 0, 0.45, false);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    // 黑色握把（穿过手心）
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(-20, -7, 36, 14);
+
+    // 红色软质泡沫棒体（从握把向 +X 方向延伸至棒尖）
+    ctx.fillStyle = '#f43f5e';
+    ctx.strokeStyle = '#18181b';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.roundRect(14, -13, batLen - 14, 26, 11);
+    ctx.fill();
+    ctx.stroke();
+
+    // 棒身反光高光
+    ctx.fillStyle = '#fda4af';
+    ctx.fillRect(22, -8, batLen - 34, 4);
+    ctx.restore();
+
+    // 2. 前景单膝跪姿女生
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    ctx.beginPath();
+    ctx.ellipse(600, 472, 145, 34, 0.1, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#18181b';
+    ctx.lineWidth = 2.2;
+
+    // 后跪右腿
+    ctx.fillStyle = '#d6976c';
+    ctx.beginPath();
+    ctx.moveTo(665, 335); ctx.lineTo(712, 422); ctx.lineTo(808, 462); ctx.lineTo(796, 480); ctx.lineTo(682, 432); ctx.lineTo(632, 350);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    // 前弓左腿
+    ctx.fillStyle = '#e5a97c';
+    ctx.beginPath();
+    ctx.moveTo(625, 325); ctx.quadraticCurveTo(515, 315, 502, 365); ctx.lineTo(496, 454); ctx.lineTo(462, 466); ctx.lineTo(466, 478); ctx.lineTo(526, 476); ctx.lineTo(544, 382); ctx.quadraticCurveTo(590, 375, 645, 355);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    // 浅灰短裤
+    ctx.fillStyle = '#e2e8f0';
+    ctx.beginPath();
+    ctx.moveTo(628, 275); ctx.quadraticCurveTo(698, 285, 705, 340); ctx.quadraticCurveTo(655, 372, 608, 352); ctx.quadraticCurveTo(602, 305, 628, 275);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(648, 285); ctx.quadraticCurveTo(655, 325, 635, 358); ctx.stroke();
+
+    // 躯干与黑背心
+    ctx.strokeStyle = '#18181b';
+    ctx.lineWidth = 2.2;
+    ctx.fillStyle = '#e5a97c';
+    ctx.beginPath();
+    ctx.moveTo(645, 205); ctx.lineTo(715, 220); ctx.lineTo(695, 288); ctx.lineTo(628, 276);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath();
+    ctx.moveTo(646, 220); ctx.lineTo(714, 232); ctx.lineTo(706, 265); ctx.lineTo(636, 252);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    // 双臂稳稳伸向旋转支点 (pivotX, pivotY)
+    ctx.fillStyle = '#e5a97c';
+    ctx.beginPath();
+    ctx.moveTo(665, 214);
+    ctx.quadraticCurveTo(605, 232, pivotX, pivotY - 8);
+    ctx.lineTo(pivotX, pivotY + 10);
+    ctx.quadraticCurveTo(608, 252, 675, 236);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // 紧握握把的双手（棒子的旋转中心）
+    ctx.fillStyle = '#eab388';
+    ctx.beginPath();
+    ctx.arc(pivotX, pivotY, 13, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // 头部与长直发
+    ctx.fillStyle = '#231712';
+    ctx.beginPath();
+    ctx.moveTo(665, 155); ctx.quadraticCurveTo(705, 142, 736, 175); ctx.quadraticCurveTo(755, 225, 738, 275); ctx.quadraticCurveTo(705, 262, 685, 238); ctx.quadraticCurveTo(655, 205, 665, 155);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    ctx.restore();
+}
+
+function renderEffectsAndHUD() {
+    for (const ft of floatingTexts) {
+        const alpha = Math.min(1, ft.life / 0.35);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.font = `bold ${ft.size}px "Microsoft YaHei", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.strokeStyle = '#090d16';
+        ctx.lineWidth = 5;
+        ctx.strokeText(ft.text, ft.x, ft.y);
+        ctx.fillStyle = ft.color;
+        ctx.fillText(ft.text, ft.x, ft.y);
+        ctx.restore();
+    }
+
+    if (gameMode === 'attack' && bat.state === 'charging') {
+        const bx = 435, by = 145, bw = 120, bh = 14;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+        ctx.fillRect(bx - 3, by - 3, bw + 6, bh + 6);
+        const grad = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+        grad.addColorStop(0, '#22c55e');
+        grad.addColorStop(0.6, '#facc15');
+        grad.addColorStop(1, '#ef4444');
+        ctx.fillStyle = grad;
+        ctx.fillRect(bx, by, bw * bat.power, bh);
+        ctx.strokeStyle = '#f8fafc';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(bx - 3, by - 3, bw + 6, bh + 6);
+    }
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.86)';
+    ctx.strokeStyle = '#475569';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(16, H - 76, 250, 60, 8);
+    ctx.fill(); ctx.stroke();
+
+    ctx.font = 'bold 14px "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#f43f5e';
+    ctx.fillText(`💥 命中要害: ${hitScore} 次`, 30, H - 51);
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText(`🦶 双脚接住: ${catchScore} 次`, 30, H - 28);
+
+    if (combo > 1) {
+        ctx.fillStyle = '#facc15';
+        ctx.fillText(`${combo} 连击!`, 185, H - 39);
+    }
+}
+
+// ============================================================================
+// 6. 主循环
+// ============================================================================
+let lastTime = performance.now();
+function loop(now) {
+    const dt = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
+    lastTime = now;
+
+    update(dt);
+    renderScene();
+
+    requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
